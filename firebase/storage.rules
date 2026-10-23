@@ -1,0 +1,40 @@
+rules_version = '2';
+
+// Firebase Storage Security Rules cho ECOMER
+// Dùng quy tắc liên dịch vụ (cross-service) để đọc vai trò từ Firestore users/{uid}.role.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function role() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function hasUserDoc() {
+      return firestore.exists(/databases/(default)/documents/users/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return request.auth != null && hasUserDoc() && role() == 'admin';
+    }
+
+    function isAppUser() {
+      return request.auth != null && hasUserDoc() && role() in ['admin', 'user'];
+    }
+
+    function isImageUnder10MB() {
+      return request.resource.contentType.matches('image/.*')
+        && request.resource.size < 10 * 1024 * 1024;
+    }
+
+    match /products/{fileName} {
+      allow read: if isAppUser();
+      allow create, update: if isAdmin() && isImageUnder10MB();
+      allow delete: if isAdmin();
+    }
+
+    // Chặn mọi đường dẫn khác
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

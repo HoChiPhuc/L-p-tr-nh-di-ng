@@ -1,0 +1,58 @@
+rules_version = '2';
+
+// Cloud Firestore Security Rules cho ECOMER
+// Vai trò lấy từ document users/{uid}.role ("admin" hoặc "user").
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function hasValidRole() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userDoc().data.role in ['admin', 'user'];
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userDoc().data.role == 'admin';
+    }
+
+    // Product chỉ được có đúng 4 trường: name, category, price, image
+    function validProduct(data) {
+      return data.keys().hasOnly(['name', 'category', 'price', 'image'])
+        && data.keys().hasAll(['name', 'category', 'price', 'image'])
+        && data.name is string && data.name.size() > 0
+        && data.category is string && data.category.size() > 0
+        && data.price is number && data.price > 0
+        && data.image is string;
+    }
+
+    // Hồ sơ phân quyền:
+    // - Đọc: chủ sở hữu hoặc admin.
+    // - Create: chỉ chính chủ, đúng một field role == 'user' (create không ghi đè doc đã có).
+    // - Update/Delete: cấm hoàn toàn từ app (đổi role chỉ qua Firebase Console/Admin SDK).
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['role'])
+        && request.resource.data.role == 'user';
+      allow update, delete: if false;
+    }
+
+    match /products/{productId} {
+      allow read: if hasValidRole();
+      allow create: if isAdmin() && validProduct(request.resource.data);
+      allow update: if isAdmin() && validProduct(request.resource.data);
+      allow delete: if isAdmin();
+    }
+  }
+}
